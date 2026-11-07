@@ -179,11 +179,25 @@ Not verified yet:
 - **The 50 ms p95 budget.** Measured in phase 0 on the 10k fixture; if pimdir can't meet
   it, the budget is revisited with numbers, not dropped.
 
+## Decisions
+
+Recorded 2026-11-07:
+
+1. **Repo:** `bobberb/rail`, a GitHub fork of `vitosans/rail`.
+2. **Sync:** Rail spawns `neverest sync` itself (constraint 3). No timer or carillon.
+3. **Landing:** one PR per phase on `bobberb/rail`, each merged before the next starts.
+
 ## Open questions
 
-1. The new repo's name under `bobberb`.
-2. One neverest account per mail account (several stores, Rail unions them), or one
-   neverest account with several sources (one store)? The plan assumes the first because it
-   matches neverest's defaults.
-3. Should Rail spawn neverest itself (plan default), or should a systemd timer / carillon
-   own sync, with Rail only watching the change feed?
+1. **How accounts map onto stores.** Rail today keeps every account in one `rail.db`
+   (`crates/rail-core/src/paths.rs:130`). himalaya reads one account at a time, each
+   pointing `pimdir.root` at a store (one per neverest account by default), and offers
+   `pimdir.account` for a store several accounts share. The options:
+   - **One shared store:** several neverest accounts point `store.root` at the same
+     directory. Unified inbox and search come from pimdir, as with `rail.db`, but account
+     syncs serialize on the owner lock. Whether neverest allows a shared `store.root` is
+     inferred from himalaya's config docs, not yet tested; phase 0 tests it.
+   - **One store per account:** neverest's default. Rail opens each store and unions them,
+     and syncs run in parallel.
+   - **One neverest account with several sources:** one store, but the mail accounts
+     become sources of one account rather than accounts of their own.
