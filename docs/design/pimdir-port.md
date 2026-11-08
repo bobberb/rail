@@ -1,6 +1,6 @@
 # Port plan: Rail's UI on neverest + io-pimdir
 
-Status: **draft**, 2026-11-07. Nothing in this plan is built yet.
+Status: **in progress**, 2026-11-07. Phase 0 is done; the UI still runs on rail-core.
 
 ## Goal
 
@@ -63,8 +63,10 @@ How Rail's pieces map onto pimdir:
 
 1. **A store opens under exactly one spec draft.** io-pimdir 0.9.0 on crates.io is
    storage-draft-08, but neverest and himalaya both pin git rev
-   `5c18a026b9c85b470984192452c2aa66e060a3fe` (storage-draft-09). Rail pins that same rev,
-   and a CI check fails when Rail's pin differs from the neverest Rail is tested against.
+   `5c18a026b9c85b470984192452c2aa66e060a3fe` (storage-draft-09). Rail pins that same rev.
+   `tests/pin.rs` holds the pin to `Cargo.lock` and to the draft a store is stamped with,
+   and the CI job `pimdir-pin` (`scripts/check-pimdir-pin.sh`) fails when neverest's or
+   himalaya's master pins another rev.
 2. **Rail is a producer, not the owner.** Only the owner (neverest) mutates the store.
    Rail can queue an action but cannot cancel it: `cancel_action` is an owner write
    (`STORAGE.md` §15.5). So **undo send and undo action hold the action inside Rail for the
@@ -84,6 +86,32 @@ How Rail's pieces map onto pimdir:
    `link_id`, and a thread name. An interner in `rail-pimdir` maps them to session-scoped
    `i64`s, so the screens don't change type. The ids are never persisted; anything Rail
    stores (snoozes, saved searches) uses pimdir's own keys.
+6. **The threaded listing is too slow to page the inbox.** Measured in phase 0 on 10,000
+   messages (`crates/rail-pimdir/tests/budget.rs`, release): the flat unified list pages in
+   0.82 ms p95 and opening one thread takes 0.89 ms p95, but `PimdirIndex::threads` takes
+   475 ms p95 for its first page, 9.5× the budget. It collects every match before paging
+   (`found(..., None)` then one `HIT_THREAD` lookup per hit, io-pimdir
+   `src/client/search.rs:667-700`), so it grows with the mailbox, not with the page. Phase 2
+   has to answer this before the thread list is built on it: candidates are collapsing the
+   flat page into threads in `rail-pimdir` with a batched thread-id lookup, or a paged
+   `threads` upstream (deferred, like all upstream work).
+7. **In a shared store, every account's sources need distinct names, and neverest's defaults
+   don't give them.** neverest names a collection `<source>/<mailbox>` (`hub_id`,
+   `neverest/src/offline/driver.rs:129,1469`), and its short config form (`imap.server = …`
+   under the account), which `neverest configure` writes (`src/wizard/discover.rs:11-12`),
+   names the source after its protocol (`src/config.rs:475`). So two wizard-made IMAP
+   accounts pointed at one store would both sync `imap/INBOX`: one collection, owned by
+   whichever declared it first (`crates/rail-pimdir/tests/shared_store.rs`). It is worse
+   than a shared inbox: sync state is keyed by collection and source, not account
+   (`src/offline/storage.rs:174-190`), so the second account would reconcile its server
+   against the first account's checkpoint and placements, likely tombstoning or duplicating
+   mail. The wizard also writes no `store.root`, so a shared store always needs a config
+   written for it. Rail therefore owns that config: phase 2 adds a command that writes the
+   neverest config for the shared store with `sources.<account>-<protocol>` names, and Rail's
+   doctor refuses to sync a shared store where two accounts' source names meet.
+8. **The workspace moved to rusqlite 0.41 and Rust 1.89.** io-pimdir needs both, and
+   `libsqlite3-sys` links one SQLite per build, so rail-core moved with it in phase 0
+   (its 1,509 tests pass unchanged).
 
 ## Target layout
 
@@ -107,7 +135,7 @@ crates/
 
 | Feature | Fate |
 |---|---|
-| unified inbox, per-account views | **Kept.** One store per neverest account (an account is one store, per neverest's config), unioned in `rail-pimdir`. |
+| unified inbox, per-account views | **Kept.** One store all accounts share (decision 4): the unified inbox lists every account's collections, a per-account view one account's. |
 | threads | **Kept**, from the pimdir index. |
 | filter as you type, saved searches | **Kept.** The filter compiles to a pimdir query. Saved searches stay in Rail's `config.toml`. |
 | archive, trash, star, read, move, labels | **Kept**, as queued actions. Gmail labels: add = `copy`, remove = `remove` of that placement. |
@@ -129,11 +157,23 @@ crates/
 
 Each phase leaves the tree building with its tests green, and each lands as its own commit.
 
-0. **Pin and fixtures.** Add io-pimdir at rev `5c18a02` with `client` and `search`.
-   Write a fixture builder that uses the owner handle (`PimdirStore::put_item`, the same
-   path neverest uses) to create small stores from `.eml` files: threads, Gmail labels in
-   several collections, a 10k-message store for the bench. Check the fixtures against
-   pimdir's own vectors (`pimdir/vectors`).
+0. **Pin and fixtures. Done** (2026-11-07). io-pimdir pinned at `5c18a02` with `client`
+   and `search` (workspace `Cargo.toml`), restated as `rail_pimdir::IO_PIMDIR_REV` and held
+   to `Cargo.lock` and the library's `FORMAT_VERSION` by `tests/pin.rs`;
+   `scripts/check-pimdir-pin.sh` compares it with neverest's and himalaya's master. The
+   fixture builder (`rail_pimdir::fixture`, feature `fixture`) leaves a store in the state a
+   neverest IMAP sync does, for everything a reader or producer sees: each source's
+   capabilities declared as neverest declares them (producers branch on it, STORAGE §15.6),
+   each collection's syncing row as `register_syncing` records it, and each message as a
+   reconciled, hydrated placement with its `base`, landed through the source write path
+   (not `put_item`, which refuses mail). Checkpoints, rounds and coverage are not mirrored;
+   only the sync engine reads them. Tests cover paging, summaries, flags, threading by
+   parent (not subject), declared capabilities, a Gmail label as a second placement, and the
+   shared store (decision 4). `tests/neverest.rs` compares a fixture's capability rows with
+   a real run's. The 10k bench is `tests/budget.rs` (constraint 6 has the numbers). The
+   fixtures are not run against pimdir's vectors: they go through the write path whose
+   output io-pimdir's own suite checks against them, so the vectors would test io-pimdir,
+   not Rail.
 1. **Extract `rail-model`.** Move the rail-core types the TUI imports into the new crate.
    This is mechanical: the TUI's imports change and its behavior doesn't. Gate: the full
    TUI suite passes unchanged.
@@ -151,8 +191,8 @@ Each phase leaves the tree building with its tests green, and each lands as its 
    Gate: outcomes 2 and 3 hold.
 7. **End to end, by hand.** A real neverest run against a test account: sync, archive in
    Rail, sync, see it archived on the server. Record the run in this doc.
-8. **Ship.** Create the new repo under `bobberb` (name to decide), push, open the PR there.
-   Nothing goes to `vitosans/rail`.
+8. **Ship.** Each phase is a PR on `bobberb/rail` (decision 3). Nothing goes to
+   `vitosans/rail`.
 
 ## Verification log
 
@@ -168,16 +208,27 @@ What was checked for this plan, against which source (repos cloned 2026-11-07):
 | producers cannot cancel | pimdir `STORAGE.md` §15.5 |
 | threads by In-Reply-To/References, never subject | io-pimdir `src/search/thread.rs:1-14` |
 | mail summary fields (subject, sender, date, size, attachment, from/to/cc/bcc, in_reply_to) | io-pimdir `src/summary/mail.rs:47-74` |
+| several accounts share one store | io-pimdir `tests/multi_account.rs`; neverest `src/offline/driver.rs:214-224` ("a store shared by two accounts tells whose is whose") and `:323` ("they may share a `store.root`"); Rail `crates/rail-pimdir/tests/shared_store.rs` |
+| a reader opens while the owner holds the store | `crates/rail-pimdir/tests/shared_store.rs` |
+| collections are `<source>/<mailbox>` | neverest `src/offline/driver.rs:129,1469` |
+| one message in two mailboxes keeps one `seq` and body | `crates/rail-pimdir/tests/fixture.rs` |
+| **outcome 3 (50 ms p95 inbox)** | **not met.** Rail's inbox is a thread list, and the threaded listing takes 475 ms p95 (constraint 6). The flat list (0.82 ms p95 first page and page 101) and opening a thread (0.89 ms) are within it. `tests/budget.rs` asserts all four and fails until phase 2. |
+| replies thread by parent, not subject | `crates/rail-pimdir/tests/fixture.rs` (a renamed reply joins, a "Re:" look-alike doesn't) |
+| rail-core runs on rusqlite 0.41 | `cargo test -p rail-core`: 1,509 passed |
 
 Not verified yet:
 
-- **Gmail labels as `copy`/`remove`.** Depends on how neverest's Gmail source represents
-  labels (collections or flags). Settled in phase 0 by syncing a fixture through neverest's
-  Gmail tests.
+- **Two real neverest accounts syncing into one `store.root`.**
+  `scripts/neverest-shared-store.sh` does it end to end (Stalwart in a container, two users,
+  then `crates/rail-pimdir/tests/neverest.rs` reads the store and compares a fixture's
+  capability rows with the run's), but it could not run in the session that wrote it: the
+  sandbox there blocks podman from publishing ports. The source evidence above is why
+  decision 4 stands; the script turns it into a run.
+- **Gmail labels as `copy`/`remove`.** The store side is settled (a label is a second
+  placement of one `seq`), but how neverest's Gmail source maps labels needs a Gmail
+  account. Settled in phase 7.
 - **neverest `--json` report schema** for the status line. Settled in phase 2 with
   `neverest json-schema`.
-- **The 50 ms p95 budget.** Measured in phase 0 on the 10k fixture; if pimdir can't meet
-  it, the budget is revisited with numbers, not dropped.
 
 ## Decisions
 
@@ -186,18 +237,13 @@ Recorded 2026-11-07:
 1. **Repo:** `bobberb/rail`, a GitHub fork of `vitosans/rail`.
 2. **Sync:** Rail spawns `neverest sync` itself (constraint 3). No timer or carillon.
 3. **Landing:** one PR per phase on `bobberb/rail`, each merged before the next starts.
+4. **Stores:** one shared store. Every neverest account points `store.root` at the same
+   directory, as Rail's one `rail.db` holds every account today
+   (`crates/rail-core/src/paths.rs:130`). Collections are grouped by account, so the
+   unified inbox and cross-account search come from pimdir directly; account syncs take
+   turns on the owner lock. Sources need distinct names across accounts (constraint 7).
 
 ## Open questions
 
-1. **How accounts map onto stores.** Rail today keeps every account in one `rail.db`
-   (`crates/rail-core/src/paths.rs:130`). himalaya reads one account at a time, each
-   pointing `pimdir.root` at a store (one per neverest account by default), and offers
-   `pimdir.account` for a store several accounts share. The options:
-   - **One shared store:** several neverest accounts point `store.root` at the same
-     directory. Unified inbox and search come from pimdir, as with `rail.db`, but account
-     syncs serialize on the owner lock. Whether neverest allows a shared `store.root` is
-     inferred from himalaya's config docs, not yet tested; phase 0 tests it.
-   - **One store per account:** neverest's default. Rail opens each store and unions them,
-     and syncs run in parallel.
-   - **One neverest account with several sources:** one store, but the mail accounts
-     become sources of one account rather than accounts of their own.
+1. **How to page the threaded inbox** within budget (constraint 6). Decided in phase 2,
+   with numbers from `tests/budget.rs`.

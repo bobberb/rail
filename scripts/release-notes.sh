@@ -43,7 +43,7 @@ sha256sum -c --ignore-missing SHA256SUMS   # macOS: shasum -a 256 -c --ignore-mi
 gh attestation verify rail-${tag}-<target>.tar.gz --repo vitosans/rail
 \`\`\`
 
-On other systems, build from the tag with Rust 1.88 or newer:
+On other systems, build from the tag with Rust 1.89 or newer:
 
 \`\`\`sh
 git clone --branch ${tag} --depth 1 https://github.com/vitosans/rail.git

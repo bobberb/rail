@@ -1,23 +1,29 @@
 [workspace]
 resolver = "3"
-members = ["crates/rail-core", "crates/rail"]
+members = ["crates/rail-core", "crates/rail", "crates/rail-pimdir"]
 
 [workspace.package]
 version = "0.10.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vitosans/rail"
 homepage = "https://github.com/vitosans/rail"
 
 [workspace.dependencies]
 rail-core = { path = "crates/rail-core" }
+rail-pimdir = { path = "crates/rail-pimdir" }
+# The pimdir store library. A store opens under exactly one spec draft, so this pin must be the
+# one the user's neverest was built with: neverest and himalaya both pin this rev
+# (storage-draft-09). `rail_pimdir::IO_PIMDIR_REV` restates it and a test holds the two together;
+# scripts/check-pimdir-pin.sh compares it with neverest's master.
+io-pimdir = { git = "https://github.com/pimalaya/io-pimdir", rev = "5c18a026b9c85b470984192452c2aa66e060a3fe", default-features = false, features = ["client", "search", "vendored"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "fs"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 toml = "1.1"
 toml_edit = "0.25"
 directories = "6.0"
