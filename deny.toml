@@ -7,9 +7,10 @@ allow = [
 [advisories]
 yanked = "deny"
 # These standalone crates were folded into zbus 6, not reported vulnerable.
-# keyring 4.2's Linux backend still requires zbus 5; zbus 6 needs Rust 1.89,
-# above Rail's 1.88 minimum. Remove these when the keyring backend migrates
-# and Rail can support its MSRV. Keep vulnerability and other advisory checks.
+# keyring 4.2's Linux backend still requires zbus 5. zbus 6 needs Rust 1.89,
+# which is now Rail's minimum too, so only the keyring migration is left.
+# Remove these when it lands, or when phase 6 of docs/design/pimdir-port.md
+# drops keyring. Keep vulnerability and other advisory checks.
 ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant: transitive keyring dependency; migration requires zbus 6" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names: transitive keyring dependency; migration requires zbus 6" },
@@ -18,3 +19,9 @@ ignore = [
 
 [bans]
 multiple-versions = "allow"
+
+[sources]
+# io-pimdir is pinned to the git rev neverest and himalaya pin (see Cargo.toml); no other git
+# sources are allowed.
+unknown-git = "deny"
+allow-git = ["https://github.com/pimalaya/io-pimdir"]

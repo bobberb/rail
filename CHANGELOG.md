@@ -6,6 +6,17 @@ All notable changes to Rail are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Rust 1.89 or newer is now needed** to build Rail (was 1.88), and the bundled SQLite comes
+  through rusqlite 0.41. Both are what io-pimdir, the store library of the planned port to
+  neverest ([docs/design/pimdir-port.md](docs/design/pimdir-port.md)), requires.
+
+### Added
+
+- **`rail-pimdir`**, the first piece of that port: the io-pimdir pin and a fixture builder for
+  pimdir stores. Rail itself does not use it yet.
+
 ## [0.10.1] - 2026-11-03
 
 Far fewer 1Password prompts: a token refresh writes back to the secret store only when it must
